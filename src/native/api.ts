@@ -185,8 +185,8 @@ export function createNativeApi(library: LoadedLibrary): NativeApi {
       const code = symbols.mdb_get(
         txn,
         dbi,
-        keyScratch.pointer,
-        dataScratch.pointer,
+        keyScratch.storage,
+        dataScratch.storage,
       );
       if (code === MDB_NOTFOUND) return null;
       check(code);
@@ -199,12 +199,12 @@ export function createNativeApi(library: LoadedLibrary): NativeApi {
   return {
     envCreate() {
       const slot = pointerSlot();
-      check(symbols.mdb_env_create(slot.pointer));
+      check(symbols.mdb_env_create(slot));
       return pointerFromSlot(slot);
     },
     envOpen(env, path, flags) {
       const pathString = cString(path);
-      check(symbols.mdb_env_open(env, pathString.pointer, flags, 0o664));
+      check(symbols.mdb_env_open(env, pathString, flags, 0o664));
     },
     envSetMaxDbs(env, maxDbs) {
       check(symbols.mdb_env_set_maxdbs(env, maxDbs));
@@ -217,15 +217,13 @@ export function createNativeApi(library: LoadedLibrary): NativeApi {
     },
     envGetFlags(env) {
       const flags = new Uint32Array(1);
-      const pointer = Deno.UnsafePointer.of(flags);
-      if (pointer === null) throw new Error('Unable to allocate flag storage');
-      check(symbols.mdb_env_get_flags(env, pointer));
+      check(symbols.mdb_env_get_flags(env, flags));
       return flags[0];
     },
     envStat(env) {
       const output = statStorage();
-      check(symbols.mdb_env_stat(env, output.pointer));
-      const value = readStat(output.storage);
+      check(symbols.mdb_env_stat(env, output));
+      const value = readStat(output);
       return {
         psize: value.psize,
         depth: value.depth,
@@ -237,8 +235,8 @@ export function createNativeApi(library: LoadedLibrary): NativeApi {
     },
     envInfo(env) {
       const output = envInfoStorage();
-      check(symbols.mdb_env_info(env, output.pointer));
-      const value = readEnvInfo(output.storage);
+      check(symbols.mdb_env_info(env, output));
+      const value = readEnvInfo(output);
       return {
         mapaddr: value.mapAddress,
         mapsize: value.mapSize,
@@ -254,14 +252,14 @@ export function createNativeApi(library: LoadedLibrary): NativeApi {
         check(
           await symbols.mdb_env_copy2(
             env,
-            pathString.pointer,
+            pathString,
             compact ? 1 : 0,
           ),
         );
       } finally {
         // Nonblocking FFI borrows both values until the native call settles.
         void env;
-        void pathString.storage;
+        void pathString;
       }
     },
     async envSync(env, force) {
@@ -282,7 +280,7 @@ export function createNativeApi(library: LoadedLibrary): NativeApi {
           env,
           parent,
           readOnly ? 0x20000 : 0,
-          slot.pointer,
+          slot,
         ),
       );
       return pointerFromSlot(slot);
@@ -301,19 +299,15 @@ export function createNativeApi(library: LoadedLibrary): NativeApi {
     },
     dbiOpen(txn, name, flags) {
       const output = new Uint32Array(1);
-      const outputPointer = Deno.UnsafePointer.of(output);
-      if (outputPointer === null) {
-        throw new Error('Unable to allocate DBI output storage');
-      }
       const nameString = name === null || name === undefined
         ? undefined
         : cString(name);
       checkNodeWrite(
         symbols.mdb_dbi_open(
           txn,
-          nameString?.pointer ?? null,
+          nameString ?? null,
           flags,
-          outputPointer,
+          output,
         ),
       );
       return output[0];
@@ -335,8 +329,8 @@ export function createNativeApi(library: LoadedLibrary): NativeApi {
           symbols.mdb_put(
             txn,
             dbi,
-            keyScratch.pointer,
-            dataScratch.pointer,
+            keyScratch.storage,
+            dataScratch.storage,
             flags,
           ),
         );
@@ -352,8 +346,8 @@ export function createNativeApi(library: LoadedLibrary): NativeApi {
           symbols.mdb_del(
             txn,
             dbi,
-            keyScratch.pointer,
-            value === undefined ? null : dataScratch.pointer,
+            keyScratch.storage,
+            value === undefined ? null : dataScratch.storage,
           ),
         );
       } finally {
@@ -365,8 +359,8 @@ export function createNativeApi(library: LoadedLibrary): NativeApi {
     },
     stat(txn, dbi) {
       const output = statStorage();
-      check(symbols.mdb_stat(txn, dbi, output.pointer));
-      const value = readStat(output.storage);
+      check(symbols.mdb_stat(txn, dbi, output));
+      const value = readStat(output);
       return {
         psize: value.psize,
         depth: value.depth,
@@ -378,7 +372,7 @@ export function createNativeApi(library: LoadedLibrary): NativeApi {
     },
     cursorOpen(txn, dbi) {
       const slot = pointerSlot();
-      check(symbols.mdb_cursor_open(txn, dbi, slot.pointer));
+      check(symbols.mdb_cursor_open(txn, dbi, slot));
       return pointerFromSlot(slot);
     },
     cursorClose(cursor) {
@@ -390,8 +384,8 @@ export function createNativeApi(library: LoadedLibrary): NativeApi {
         prepareScratch(dataScratch, value);
         const code = symbols.mdb_cursor_get(
           cursor,
-          keyScratch.pointer,
-          dataScratch.pointer,
+          keyScratch.storage,
+          dataScratch.storage,
           operation,
         );
         if (code === MDB_NOTFOUND) return null;

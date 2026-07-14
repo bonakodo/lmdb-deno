@@ -4,6 +4,7 @@ import {
   assertThrows,
 } from './_support/assertions.ts';
 import {
+  copyBytes,
   MDB_VAL_DATA_OFFSET,
   MDB_VAL_SIZE,
   MDB_VAL_SIZE_OFFSET,
@@ -14,16 +15,71 @@ import {
 const MDB_NOTFOUND = -30798;
 const MDB_BAD_VALSIZE = -30781;
 
+Deno.test('mutable MDB_val keeps outer storage as a buffer', () => {
+  const slot = mutableMdbVal();
+
+  assertEquals('pointer' in slot, false);
+  assertEquals(slot.storage instanceof Uint8Array, true);
+});
+
+Deno.test('safe native copies avoid external ArrayBuffer views', () => {
+  const source = new Uint8Array([1, 2, 3, 4]);
+  const pointer = pointerFor(source);
+  const prototype = Deno.UnsafePointerView.prototype;
+  const originalGetArrayBuffer = prototype.getArrayBuffer;
+  const originalCopyInto = prototype.copyInto;
+  let copyIntoCalls = 0;
+
+  try {
+    Object.defineProperty(prototype, 'getArrayBuffer', {
+      configurable: true,
+      value: () => {
+        throw new Error('safe copies must not create external ArrayBuffers');
+      },
+      writable: true,
+    });
+    Object.defineProperty(prototype, 'copyInto', {
+      configurable: true,
+      value: function (
+        this: Deno.UnsafePointerView,
+        destination: BufferSource,
+        offset?: number,
+      ): void {
+        copyIntoCalls++;
+        originalCopyInto.call(this, destination, offset);
+      },
+      writable: true,
+    });
+
+    const copied = copyBytes(pointer, source.byteLength);
+    assertEquals(copied, source);
+    assertEquals(copyIntoCalls, 1);
+
+    source[0] = 9;
+    assertEquals(copied, new Uint8Array([1, 2, 3, 4]));
+  } finally {
+    Object.defineProperty(prototype, 'getArrayBuffer', {
+      configurable: true,
+      value: originalGetArrayBuffer,
+      writable: true,
+    });
+    Object.defineProperty(prototype, 'copyInto', {
+      configurable: true,
+      value: originalCopyInto,
+      writable: true,
+    });
+  }
+});
+
 interface NativeCall {
   readonly name: string;
-  readonly key: Deno.PointerObject;
-  readonly data: Deno.PointerObject | null;
+  readonly key: Uint8Array;
+  readonly data: Uint8Array | null;
 }
 
 Deno.test('mutable MDB_val scratch reuses storage and releases every input', () => {
   const slot = mutableMdbVal();
   const storage = slot.storage;
-  const pointer = slot.pointer;
   const view = slot.view;
 
   for (
@@ -36,7 +92,6 @@ Deno.test('mutable MDB_val scratch reuses storage and releases every input', () 
     slot.setInput(input);
 
     assertEquals(slot.storage === storage, true);
-    assertEquals(slot.pointer === pointer, true);
     assertEquals(slot.view === view, true);
     assertEquals(slot.value === input, true);
     assertEquals(
@@ -61,7 +116,7 @@ Deno.test('mutable MDB_val scratch reads native output without replacing its vie
   const output = new Uint8Array([8, 9, 10, 11]);
 
   slot.clear();
-  writeMdbVal(slot.pointer, output);
+  writeMdbVal(slot.storage, output);
 
   assertEquals(slot.view === view, true);
   assertEquals(readMdbVal(slot), {
@@ -107,16 +162,16 @@ Deno.test('native hot paths reuse and clear scratch after successful calls', asy
   );
 
   assertEquals(calls.length, 9);
-  const keyAddress = Deno.UnsafePointer.value(calls[0].key);
+  const keyStorage = calls[0].key;
   const data = calls[0].data;
   assertExists(data);
-  const dataAddress = Deno.UnsafePointer.value(data);
+  const dataStorage = data;
   for (const call of calls) {
-    assertEquals(Deno.UnsafePointer.value(call.key), keyAddress);
-    assertZeroedPointer(call.key);
+    assertEquals(call.key === keyStorage, true);
+    assertEquals(call.key, new Uint8Array(MDB_VAL_SIZE));
     if (call.data !== null) {
-      assertEquals(Deno.UnsafePointer.value(call.data), dataAddress);
-      assertZeroedPointer(call.data);
+      assertEquals(call.data === dataStorage, true);
+      assertEquals(call.data, new Uint8Array(MDB_VAL_SIZE));
     }
   }
 });
@@ -127,8 +182,8 @@ Deno.test('native hot paths clear scratch after not-found and native errors', as
   symbols.mdb_get = (
     _txn: Deno.PointerObject,
     _dbi: number,
-    key: Deno.PointerObject,
-    data: Deno.PointerObject,
+    key: Uint8Array,
+    data: Uint8Array,
   ) => {
     calls.push({ name: 'get', key, data });
     return MDB_NOTFOUND;
@@ -136,8 +191,8 @@ Deno.test('native hot paths clear scratch after not-found and native errors', as
   symbols.mdb_put = (
     _txn: Deno.PointerObject,
     _dbi: number,
-    key: Deno.PointerObject,
-    data: Deno.PointerObject,
+    key: Uint8Array,
+    data: Uint8Array,
     _flags: number,
   ) => {
     calls.push({ name: 'put', key, data });
@@ -145,8 +200,8 @@ Deno.test('native hot paths clear scratch after not-found and native errors', as
   };
   symbols.mdb_cursor_get = (
     _cursor: Deno.PointerObject,
-    key: Deno.PointerObject,
-    data: Deno.PointerObject,
+    key: Uint8Array,
+    data: Uint8Array,
     _operation: number,
   ) => {
     calls.push({ name: 'cursorGet', key, data });
@@ -184,9 +239,9 @@ Deno.test('native hot paths clear scratch after not-found and native errors', as
 
   assertEquals(calls.length, 3);
   for (const call of calls) {
-    assertZeroedPointer(call.key);
+    assertEquals(call.key, new Uint8Array(MDB_VAL_SIZE));
     assertExists(call.data);
-    assertZeroedPointer(call.data);
+    assertEquals(call.data, new Uint8Array(MDB_VAL_SIZE));
   }
 });
 
@@ -196,8 +251,8 @@ function fakeSymbols(calls: NativeCall[], output: Uint8Array) {
     mdb_get: (
       _txn: Deno.PointerObject,
       _dbi: number,
-      key: Deno.PointerObject,
-      data: Deno.PointerObject,
+      key: Uint8Array,
+      data: Uint8Array,
     ) => {
       calls.push({ name: 'get', key, data });
       writeMdbVal(data, output);
@@ -206,8 +261,8 @@ function fakeSymbols(calls: NativeCall[], output: Uint8Array) {
     mdb_put: (
       _txn: Deno.PointerObject,
       _dbi: number,
-      key: Deno.PointerObject,
-      data: Deno.PointerObject,
+      key: Uint8Array,
+      data: Uint8Array,
       _flags: number,
     ) => {
       calls.push({ name: 'put', key, data });
@@ -216,16 +271,16 @@ function fakeSymbols(calls: NativeCall[], output: Uint8Array) {
     mdb_del: (
       _txn: Deno.PointerObject,
       _dbi: number,
-      key: Deno.PointerObject,
-      data: Deno.PointerObject | null,
+      key: Uint8Array,
+      data: Uint8Array | null,
     ) => {
       calls.push({ name: 'del', key, data });
       return 0;
     },
     mdb_cursor_get: (
       _cursor: Deno.PointerObject,
-      key: Deno.PointerObject,
-      data: Deno.PointerObject,
+      key: Uint8Array,
+      data: Uint8Array,
       _operation: number,
     ) => {
       calls.push({ name: 'cursorGet', key, data });
@@ -268,8 +323,12 @@ function pointerFor(bytes: Uint8Array): Deno.PointerObject {
   return pointer;
 }
 
-function writeMdbVal(pointer: Deno.PointerObject, bytes: Uint8Array): void {
-  const view = mdbValView(pointer);
+function writeMdbVal(storage: Uint8Array, bytes: Uint8Array): void {
+  const view = new DataView(
+    storage.buffer,
+    storage.byteOffset,
+    storage.byteLength,
+  );
   view.setBigUint64(MDB_VAL_SIZE_OFFSET, BigInt(bytes.byteLength), true);
   view.setBigUint64(MDB_VAL_DATA_OFFSET, pointerValue(bytes), true);
 }
@@ -279,19 +338,4 @@ function assertZeroed(
 ): void {
   assertEquals(slot.value, undefined);
   assertEquals(slot.storage, new Uint8Array(MDB_VAL_SIZE));
-}
-
-function assertZeroedPointer(pointer: Deno.PointerObject): void {
-  assertEquals(
-    new Uint8Array(
-      new Deno.UnsafePointerView(pointer).getArrayBuffer(MDB_VAL_SIZE),
-    ),
-    new Uint8Array(MDB_VAL_SIZE),
-  );
-}
-
-function mdbValView(pointer: Deno.PointerObject): DataView {
-  return new DataView(
-    new Deno.UnsafePointerView(pointer).getArrayBuffer(MDB_VAL_SIZE),
-  );
 }
