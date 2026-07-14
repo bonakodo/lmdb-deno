@@ -45,7 +45,7 @@ import { Cursor, Env } from '@bonakodo/lmdb';
 ```
 
 Without an import-map entry, use
-`import { Env } from 'jsr:@bonakodo/lmdb@^0.1.0'`.
+`import { Env } from 'jsr:@bonakodo/lmdb@^0.2.0'`.
 
 ### Install LMDB 1.0.0
 
@@ -134,7 +134,7 @@ without constructing or reading native pointers:
 
 ```sh
 deno run --allow-env=LMDB_LIB_PATH --allow-ffi="$LMDB_LIB_PATH" - <<'TS'
-import { version } from 'jsr:@bonakodo/lmdb@^0.1.0';
+import { version } from 'jsr:@bonakodo/lmdb@^0.2.0';
 console.log(version);
 TS
 ```
