@@ -1,0 +1,35 @@
+{
+  "$schema": "https://raw.githubusercontent.com/denoland/deno/refs/heads/main/cli/schemas/config-file.v1.json",
+  "name": "@bonakodo/lmdb",
+  "version": "0.1.0",
+  "license": "BSD-3-Clause",
+  "exports": "./mod.ts",
+  "tasks": {
+    "check": "deno fmt --check && deno lint mod.ts src test compat && deno check mod.ts test/types/compat.test.ts test/compat_oracle.test.ts compat/deno/common.ts compat/deno/oracle.ts",
+    "test": "deno test --ignore=test/compat_oracle.test.ts --allow-env=LMDB_LIB_PATH --allow-ffi --allow-read --allow-write --allow-run test",
+    "compat:bootstrap": "node -e \"if (process.version !== 'v22.23.1') throw new Error('Node.js 22.23.1 LTS is required; found ' + process.version)\" && npm ci --prefix compat/node",
+    "test:compat": "deno test --allow-env=LMDB_LIB_PATH,NODE_LTS_BIN --allow-ffi --allow-read --allow-write --allow-run test/compat_oracle.test.ts",
+    "test:all": "deno task test && deno task test:compat",
+    "bench": "deno bench --allow-env --allow-ffi --allow-read --allow-write bench/raw_binary.bench.ts",
+    "doc": "deno doc --lint mod.ts",
+    "publish:dry": "deno publish --dry-run"
+  },
+  "publish": {
+    "include": [
+      "LICENSE",
+      "README.md",
+      "mod.ts",
+      "src/**/*.ts"
+    ],
+    "exclude": [
+      "src/internal/native_test_access.ts"
+    ]
+  },
+  "fmt": {
+    "indentWidth": 2,
+    "lineWidth": 80,
+    "proseWrap": "preserve",
+    "singleQuote": true,
+    "useTabs": false
+  }
+}

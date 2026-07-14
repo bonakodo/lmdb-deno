@@ -1,0 +1,110 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    name: Core (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: latest
+
+      - name: Build LMDB 1.0.0
+        shell: bash
+        run: |
+          LMDB_LIB_PATH="$(test/_support/build_lmdb_1.sh "$RUNNER_TEMP/lmdb-1.0.0")"
+          echo "LMDB_LIB_PATH=$LMDB_LIB_PATH" >> "$GITHUB_ENV"
+
+      - name: Verify LMDB 1.0.0
+        shell: bash
+        run: |
+          deno run --allow-env=LMDB_LIB_PATH --allow-ffi - <<'TS'
+          import { version } from './mod.ts';
+
+          const actual = `${version.major}.${version.minor}.${version.patch}`;
+          if (actual !== '1.0.0') {
+            throw new Error(`Expected LMDB 1.0.0, got ${actual}`);
+          }
+          console.log(`Verified LMDB ${actual}`);
+          TS
+
+      - name: Check
+        run: deno task check
+
+      - name: Test core suite
+        run: deno task test
+
+      - name: Check documentation
+        run: deno task doc
+
+      - name: Verify publish payload
+        run: deno task publish:dry
+
+  compat:
+    name: Compatibility oracle
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: latest
+
+      - name: Setup Node.js 22.23.1 LTS
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22.23.1'
+          cache: npm
+          cache-dependency-path: compat/node/package-lock.json
+
+      - name: Build LMDB 1.0.0
+        shell: bash
+        run: |
+          LMDB_LIB_PATH="$(test/_support/build_lmdb_1.sh "$RUNNER_TEMP/lmdb-1.0.0")"
+          echo "LMDB_LIB_PATH=$LMDB_LIB_PATH" >> "$GITHUB_ENV"
+
+      - name: Verify LMDB 1.0.0
+        shell: bash
+        run: |
+          deno run --allow-env=LMDB_LIB_PATH --allow-ffi - <<'TS'
+          import { version } from './mod.ts';
+
+          const actual = `${version.major}.${version.minor}.${version.patch}`;
+          if (actual !== '1.0.0') {
+            throw new Error(`Expected LMDB 1.0.0, got ${actual}`);
+          }
+          console.log(`Verified LMDB ${actual}`);
+          TS
+
+      - name: Install compatibility oracle
+        run: deno task compat:bootstrap
+
+      - name: Record Node.js LTS path
+        id: node-path
+        shell: bash
+        run: echo "path=$(command -v node)" >> "$GITHUB_OUTPUT"
+
+      - name: Test core and compatibility suites
+        run: deno task test:all
+        env:
+          LMDB_LIB_PATH: ${{ env.LMDB_LIB_PATH }}
+          NODE_LTS_BIN: ${{ steps.node-path.outputs.path }}

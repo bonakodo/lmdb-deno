@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 2,
+  "environment": {
+    "mapSize": 16777216,
+    "maxDbs": 10
+  },
+  "values": {
+    "strings": [
+      { "key": "string-empty", "value": "" },
+      {
+        "key": "string-unicode",
+        "value": "Zażółć gęślą jaźń — 日本語 — 😀"
+      },
+      { "key": "string-nul", "value": "before\u0000after" }
+    ],
+    "numbers": [
+      { "key": "number-zero", "value": "0" },
+      { "key": "number-negative-zero", "value": "-0" },
+      { "key": "number-fraction", "value": "-12345.625" },
+      { "key": "number-nan", "value": "NaN" },
+      { "key": "number-positive-infinity", "value": "Infinity" },
+      { "key": "number-negative-infinity", "value": "-Infinity" }
+    ],
+    "booleans": [
+      { "key": "boolean-true", "value": true },
+      { "key": "boolean-false", "value": false }
+    ],
+    "binaries": [
+      { "key": "binary-empty", "value": "" },
+      { "key": "binary-zero", "value": "00" },
+      { "key": "binary-bytes", "value": "0001ff" }
+    ]
+  },
+  "keyModes": {
+    "strings": [
+      { "key": "alpha", "value": "string key alpha" },
+      { "key": "omega", "value": "string key omega" }
+    ],
+    "uint32": [
+      { "key": 0, "value": "uint32 zero" },
+      { "key": 42, "value": "uint32 forty-two" },
+      { "key": 4294967295, "value": "uint32 max" }
+    ],
+    "binaries": [
+      { "key": "00", "value": "binary key zero" },
+      { "key": "0001ff", "value": "binary key bytes" }
+    ]
+  },
+  "duplicates": {
+    "key": "duplicate-key",
+    "values": ["00", "02", "ff"],
+    "fixedKey": "fixed-duplicate-key",
+    "fixedValues": ["00000000", "00000001", "ffffffff"]
+  },
+  "batch": {
+    "expectedResults": [0, 1, 2, 0],
+    "seed": [
+      { "key": "guard", "value": "0102" }
+    ],
+    "operations": [
+      { "kind": "put", "key": "created", "value": "aa" },
+      {
+        "kind": "put",
+        "key": "condition-failed",
+        "value": "bb",
+        "ifKey": "guard",
+        "ifValue": "01",
+        "ifExactMatch": true
+      },
+      { "kind": "delete", "key": "missing" },
+      {
+        "kind": "put",
+        "key": "condition-prefix",
+        "value": "cc",
+        "ifKey": "guard",
+        "ifValue": "01",
+        "ifExactMatch": false
+      }
+    ]
+  },
+  "errors": [
+    "missing-database",
+    "read-only-write",
+    "duplicate-key"
+  ]
+}

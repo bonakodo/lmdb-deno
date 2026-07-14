@@ -1,0 +1,4 @@
+data
+/compat/node/node_modules/
+/node-test/
+deno.lock
