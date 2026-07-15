@@ -22,6 +22,7 @@ import {
   getTxnHandle,
   hasOwnedWriteTransaction,
   invalidatePendingDbis,
+  invalidateTransactionCursorCachesForWrite,
   markTxnRenewed,
   markTxnReset,
   prepareTransactionCursorsForEnd,
@@ -349,12 +350,10 @@ export class Txn {
       ? encodeDeleteValue(dataOrOptions as Value)
       : undefined;
 
-    lmdb.del(
-      getTxnHandle(this),
-      getDbiHandleForTxn(dbi, this),
-      encodedKey,
-      data,
-    );
+    const txn = getTxnHandle(this);
+    const dbiHandle = getDbiHandleForTxn(dbi, this);
+    invalidateTransactionCursorCachesForWrite(this);
+    lmdb.del(txn, dbiHandle, encodedKey, data);
   }
 
   /**
@@ -474,13 +473,10 @@ export class Txn {
     if (options?.noOverwrite === true) flags |= MDB_NOOVERWRITE;
     if (options?.noDupData === true) flags |= MDB_NODUPDATA;
     if (options?.appendDup === true) flags |= MDB_APPENDDUP;
-    lmdb.put(
-      getTxnHandle(this),
-      getDbiHandleForTxn(dbi, this),
-      encodedKey,
-      data,
-      flags,
-    );
+    const txn = getTxnHandle(this);
+    const dbiHandle = getDbiHandleForTxn(dbi, this);
+    invalidateTransactionCursorCachesForWrite(this);
+    lmdb.put(txn, dbiHandle, encodedKey, data, flags);
   }
 
   #removeFromEnv(): void {

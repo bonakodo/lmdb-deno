@@ -16,14 +16,18 @@ write-like call, the binding will clear the current-record cache of every owned
 cursor while preserving permission to recover the cursor's native current
 position.
 
-The next current-record getter will lazily call `MDB_GET_CURRENT`, copy or decode
-the refreshed value as requested, and cache the refreshed native views. Callers
-that do not read a cursor after a write incur no additional native call.
+After an ordinary write, the next current-record getter will lazily call
+`MDB_GET_CURRENT`, copy or decode the refreshed value as requested, and cache
+the refreshed native views. Callers that do not read a cursor after a write
+incur no additional native call. Emptying a DBI leaves its cursors without a
+recoverable current position, so their current-record getters return `null`
+without making that native call.
 
 Invalidation will run immediately before:
 
 - the shared implementation behind every `Txn.put*` method;
 - `Txn.del()`;
+- transactional DBI creation through `openDbi({ create: true, txn })`;
 - `Cursor.del()`, affecting all sibling cursors in the transaction; and
 - `Dbi.drop()` when it uses a caller-supplied transaction, including
   `justFreePages: true`.

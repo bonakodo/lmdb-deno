@@ -6,12 +6,14 @@ import {
   assertDbiNotRetained,
   assertSameSharedEnvironment,
   assertTxnActive,
+  clearDbiCursorCurrentRecords,
   getCommittedDbiHandle,
   getDbiEnvironmentHandle,
   getDbiHandleForTxn,
   getEnvHandle,
   getTxnHandle,
   invalidateDbiRecord,
+  invalidateTransactionCursorCachesForWrite,
   type NativeKeyTypeOption,
   registerDbiHandle,
   releaseDbiHandle,
@@ -67,7 +69,11 @@ export class Dbi {
     if (suppliedTxn !== undefined) {
       assertSameSharedEnvironment(env, suppliedTxn);
       assertTxnActive(suppliedTxn);
-      const dbi = lmdb.dbi_open(getTxnHandle(suppliedTxn), options.name, flags);
+      const txn = getTxnHandle(suppliedTxn);
+      if ((flags & MDB_CREATE) !== 0) {
+        invalidateTransactionCursorCachesForWrite(suppliedTxn);
+      }
+      const dbi = lmdb.dbi_open(txn, options.name, flags);
       registerDbiHandle(this, dbi, keyFormat, env, flags, suppliedTxn);
       return;
     }
@@ -134,12 +140,12 @@ export class Dbi {
       assertSameSharedEnvironment(this, suppliedTxn);
       assertTxnActive(suppliedTxn);
       const deleteDatabase = options?.justFreePages !== true;
-      lmdb.drop(
-        getTxnHandle(suppliedTxn),
-        getDbiHandleForTxn(this, suppliedTxn),
-        deleteDatabase,
-      );
+      const txn = getTxnHandle(suppliedTxn);
+      const dbi = getDbiHandleForTxn(this, suppliedTxn);
+      invalidateTransactionCursorCachesForWrite(suppliedTxn);
+      lmdb.drop(txn, dbi, deleteDatabase);
       if (deleteDatabase) invalidateDbiRecord(this);
+      else clearDbiCursorCurrentRecords(this);
       return;
     }
 

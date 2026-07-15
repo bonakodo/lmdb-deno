@@ -52,7 +52,7 @@ interface CursorBinding {
   txn?: TransactionBinding;
   dbi?: DbiBinding;
   readonly readOnly: boolean;
-  readonly invalidateCurrent: () => void;
+  readonly invalidateCurrent: (fallbackAllowed: boolean) => void;
   phase: 'active' | 'detached' | 'closed';
 }
 
@@ -434,6 +434,16 @@ export function prepareTransactionCursorsForEnd(owner: object): void {
   prepareTransactionCursorsForEndBinding(requireTransactionBinding(owner));
 }
 
+/** @internal Invalidates borrowed cursor views before a transaction update. */
+export function invalidateTransactionCursorCachesForWrite(
+  owner: object,
+): void {
+  invalidateTransactionCursorCachesBinding(
+    requireTransactionBinding(owner),
+    true,
+  );
+}
+
 /** @internal Rejects native operations while a read transaction is reset. */
 export function assertTxnActive(owner: object): void {
   getTxnHandle(owner);
@@ -769,7 +779,7 @@ export function registerCursorHandle(
   txnOwner: object,
   dbiOwner: object,
   readOnly: boolean,
-  invalidateCurrent: () => void,
+  invalidateCurrent: (fallbackAllowed: boolean) => void,
 ): void {
   const transaction = requireTransactionBinding(txnOwner);
   const dbi = requireLiveDbiBinding(dbiOwner);
@@ -818,6 +828,26 @@ export function clearCursorHandle(owner: object): void {
   if (binding === undefined || binding.phase === 'closed') return;
   cursorFinalizer.unregister(binding);
   closeCursorBinding(binding, false);
+}
+
+/** @internal Invalidates all sibling views before a cursor-owned update. */
+export function invalidateCursorTransactionCachesForWrite(
+  owner: object,
+): void {
+  getCursorHandle(owner);
+  const transaction = cursorBindings.get(owner)?.txn;
+  if (transaction === undefined) {
+    throw new Error('The cursor transaction has ended');
+  }
+  invalidateTransactionCursorCachesBinding(transaction, true);
+}
+
+/** @internal Clears current records after a database has been emptied. */
+export function clearDbiCursorCurrentRecords(owner: object): void {
+  const binding = requireLiveDbiBinding(owner);
+  for (const cursor of binding.record.state.cursors) {
+    if (cursor.dbi?.record === binding.record) cursor.invalidateCurrent(false);
+  }
 }
 
 /** @internal Detaches read cursors and forgets auto-closed write cursors. */
@@ -1018,7 +1048,7 @@ function invalidateDbiBinding(binding: DbiBinding): void {
 
 function invalidateDbiCursorCaches(binding: DbiBinding): void {
   for (const cursor of binding.record.state.cursors) {
-    if (cursor.dbi === binding) cursor.invalidateCurrent();
+    if (cursor.dbi === binding) cursor.invalidateCurrent(false);
   }
 }
 
@@ -1114,7 +1144,7 @@ function finishTransactionCursorsBinding(
 ): void {
   for (const cursor of [...transaction.cursors]) {
     if (cursor.readOnly && cursor.state?.poisoned !== true) {
-      cursor.invalidateCurrent();
+      cursor.invalidateCurrent(false);
       cursor.phase = 'detached';
       cursor.txn = undefined;
       transaction.cursors.delete(cursor);
@@ -1131,7 +1161,7 @@ function prepareTransactionCursorsForEndBinding(
   for (const cursor of [...transaction.cursors]) {
     if (!cursor.readOnly) continue;
     if (cursor.handle !== undefined) lmdb.cursor_close(cursor.handle);
-    cursor.invalidateCurrent();
+    cursor.invalidateCurrent(false);
     cursor.handle = undefined;
     cursor.phase = 'detached';
     cursor.txn = undefined;
@@ -1147,7 +1177,7 @@ function closeCursorBinding(
   const handle = binding.handle;
   const state = binding.state;
   const record = binding.dbi?.record;
-  binding.invalidateCurrent();
+  binding.invalidateCurrent(false);
   if (binding.phase === 'closed') return;
   if (closeNative && handle !== undefined && state?.poisoned !== true) {
     lmdb.cursor_close(handle);
@@ -1164,6 +1194,15 @@ function closeCursorBinding(
     record.cursorRefs--;
     const close = finalizeEmptyDbiRecord(record, closeDbiNative);
     if (close !== undefined) lmdb.dbi_close(close.environment, close.handle);
+  }
+}
+
+function invalidateTransactionCursorCachesBinding(
+  transaction: TransactionBinding,
+  fallbackAllowed: boolean,
+): void {
+  for (const cursor of transaction.cursors) {
+    cursor.invalidateCurrent(fallbackAllowed);
   }
 }
 

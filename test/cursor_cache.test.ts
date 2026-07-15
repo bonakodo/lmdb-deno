@@ -130,6 +130,131 @@ Deno.test('cursor clears its cached record after deleting the current value', as
   );
 });
 
+Deno.test('transaction puts refresh every owned cursor cache', async () => {
+  const module = await loadSubject();
+
+  await withTempDir((path) =>
+    withCursor(module, path, false, ({ cursor, dbi, txn }) => {
+      const sibling = new module.Cursor(txn, dbi);
+      try {
+        assertEquals(cursor.goToKey('a'), 'a');
+        assertEquals(sibling.goToKey('a'), 'a');
+
+        txn.putBinary(dbi, 'a', encoder.encode('updated'));
+
+        assertEquals(cursor.getCurrentBinary(), encoder.encode('updated'));
+        assertEquals(sibling.getCurrentBinary(), encoder.encode('updated'));
+
+        assertEquals(cursor.goToKey('string'), 'string');
+        txn.putString(dbi, 'string', 'refreshed');
+        assertEquals(cursor.getCurrentString(), 'refreshed');
+
+        assertEquals(cursor.goToKey('number'), 'number');
+        txn.putNumber(dbi, 'number', 84.5);
+        assertEquals(cursor.getCurrentNumber(), 84.5);
+
+        assertEquals(cursor.goToKey('boolean'), 'boolean');
+        txn.putBoolean(dbi, 'boolean', false);
+        assertEquals(cursor.getCurrentBoolean(), false);
+      } finally {
+        sibling.close();
+      }
+    })
+  );
+});
+
+Deno.test('failed native puts invalidate cursor caches before LMDB runs', async () => {
+  const module = await loadSubject();
+
+  await withTempDir((path) =>
+    withCursor(module, path, false, ({ cursor, dbi, txn }) => {
+      assertEquals(cursor.goToKey('a'), 'a');
+      const cached = cursor.getCurrentBinaryUnsafe();
+
+      assertThrows(() =>
+        txn.putBinary(dbi, 'a', encoder.encode('rejected'), {
+          noOverwrite: true,
+        })
+      );
+
+      const refreshed = cursor.getCurrentBinaryUnsafe();
+      assertEquals(refreshed, encoder.encode('alpha'));
+      assertNotStrictEquals(refreshed, cached);
+    })
+  );
+});
+
+Deno.test('transactional DBI creation refreshes cursor caches', async () => {
+  const module = await loadSubject();
+
+  await withTempDir((path) =>
+    withCursor(module, path, false, ({ cursor, env, txn }) => {
+      assertEquals(cursor.goToKey('a'), 'a');
+      const cached = cursor.getCurrentBinaryUnsafe();
+
+      env.openDbi({ name: 'created-after-cursor', create: true, txn });
+
+      const refreshed = cursor.getCurrentBinaryUnsafe();
+      assertEquals(refreshed, encoder.encode('alpha'));
+      assertNotStrictEquals(refreshed, cached);
+    })
+  );
+});
+
+Deno.test('transaction delete refreshes the cursor current record', async () => {
+  const module = await loadSubject();
+
+  await withTempDir((path) =>
+    withCursor(module, path, false, ({ cursor, dbi, txn }) => {
+      assertEquals(cursor.goToKey('a'), 'a');
+      assertEquals(cursor.getCurrentBinaryUnsafe(), encoder.encode('alpha'));
+
+      txn.del(dbi, 'a');
+
+      assertEquals(cursor.getCurrentBinary(), encoder.encode('bravo'));
+    })
+  );
+});
+
+Deno.test('cursor delete refreshes sibling cursor caches', async () => {
+  const module = await loadSubject();
+
+  await withTempDir((path) =>
+    withCursor(module, path, false, ({ cursor, dbi, txn }) => {
+      const sibling = new module.Cursor(txn, dbi);
+      try {
+        assertEquals(cursor.goToKey('a'), 'a');
+        assertEquals(sibling.goToKey('a'), 'a');
+        assertEquals(
+          sibling.getCurrentBinaryUnsafe(),
+          encoder.encode('alpha'),
+        );
+
+        cursor.del();
+
+        assertEquals(sibling.getCurrentBinary(), encoder.encode('bravo'));
+      } finally {
+        sibling.close();
+      }
+    })
+  );
+});
+
+Deno.test('transactional DBI drop clears cursor current records', async () => {
+  const module = await loadSubject();
+
+  await withTempDir((path) =>
+    withCursor(module, path, false, ({ cursor, dbi, txn }) => {
+      assertEquals(cursor.goToKey('a'), 'a');
+      assertEquals(cursor.getCurrentBinaryUnsafe(), encoder.encode('alpha'));
+
+      dbi.drop({ txn, justFreePages: true });
+
+      assertEquals(cursor.getCurrentBinary(), null);
+    })
+  );
+});
+
 Deno.test('cursor safe reads return durable copies of cached native data', async () => {
   const module = await loadSubject();
   let firstCopy: Uint8Array | null = null;

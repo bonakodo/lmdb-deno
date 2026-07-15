@@ -19,6 +19,7 @@ import {
   getDbiHandleForTxn,
   getDbiKeyFormat,
   getTxnHandle,
+  invalidateCursorTransactionCachesForWrite,
   type NativeKeyTypeOption,
   registerCursorHandle,
 } from './internal/native_state.ts';
@@ -101,7 +102,7 @@ export class Cursor<T extends Key = string> {
         txn,
         dbi,
         txn.isReadonly,
-        () => clearCurrentRecord(current, false),
+        (fallbackAllowed) => clearCurrentRecord(current, fallbackAllowed),
       );
     } catch (error) {
       lmdb.cursor_close(cursor);
@@ -413,6 +414,7 @@ export class Cursor<T extends Key = string> {
       );
     }
     const cursor = getCursorHandle(this);
+    invalidateCursorTransactionCachesForWrite(this);
     try {
       lmdb.cursor_del(cursor, options?.noDupData === true);
     } finally {
